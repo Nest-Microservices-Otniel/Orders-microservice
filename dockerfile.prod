@@ -1,0 +1,51 @@
+#DEPENDENCIAS
+FROM node:21-alpine3.19 as deps
+
+WORKDIR /usr/src/app
+
+COPY package.json ./
+COPY package-lock.json ./
+
+RUN npm install
+
+
+#BUILDER - construye la aplicacion 
+FROM node:21-alpine3.19 as build
+
+WORKDIR /usr/src/app
+
+#Copiar de deps, los modulos de node
+COPY --from=deps /usr/src/app/node_modules ./node_modules
+
+# Copiar el codigo fuente de la aplicacion
+COPY . .
+
+# Aqui deberia ir el npm run test para ejecutar el testing en la aplicacion si falla no se ejecuta el build
+RUN npm run build
+# Solo copiamos las dependencias necesarias en produccion asi reducimos peso y mejoramos el rendimiento de nuestra aplicacion
+RUN npm ci -f --only=production && npm cache clean --force
+# Ejecutar la generacion de prisma en produccion
+RUN npx prisma generate
+
+
+# CREAR LA IMAGEN FINAL DE DOCKER
+FROM node:21-alpine3.19 as prod
+
+WORKDIR /usr/src/app 
+
+# Copiar los modulos de node que tenemos ya en build
+COPY --from=build /usr/src/app/node_modules ./node_modules
+
+# Copiar la carpeta de distribucion
+COPY --from=build /usr/src/app/dist ./dist
+COPY --from=build /usr/src/app/prisma ./prisma
+
+
+ENV NODE_ENV=production
+
+# Cambiar de usuario para que tenga menor privilegio y no se pueda hacer la modificaciond e codigo
+USER node
+
+EXPOSE 3000
+
+CMD [ "node", "./dist/main.js" ]
